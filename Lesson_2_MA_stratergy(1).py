@@ -73,6 +73,14 @@ def MA_Strategy(data_price, window_short=5, window_median=10, window_long=20, lo
                                                         fastk_period=9, slowk_period=5, slowk_matype=1,slowd_period=5, slowd_matype=1)
     # 9 3 3
     data_price['kdj_k_ma5'] = ta.MA(data_price['kdj_k'], timeperiod = window_short , matype = 0)
+    
+    # 5个周期的20日均线向上
+    data_price['MA20'] = ta.SMA(data_price['close'], timeperiod = 20)
+    data_price['slope'] = ta.LINEARREG_SLOPE(data_price['MA20'], timeperiod=5)
+    del data_price['MA20']
+
+    # ATR设置止损出局
+    data_price['ATR'] = ta.ATR(data_price['high'], data_price['low'], data_price['close'], timeperiod=14)
 
 
     data_price['position'] = 0.0 # 记录仓位
@@ -130,6 +138,8 @@ def MA_Strategy(data_price, window_short=5, window_median=10, window_long=20, lo
         buy_cond_2 = (data_price['lma'][i - 1] > data_price['lma'][i-2]) and (data_price['sma'][i - 2] > data_price['mma'][i - 2]) and (
             data_price['sma'][i-1] < data_price['mma'][i-1]) and (data_price['sma'][i-1] > data_price['lma'][i-1])
         
+        buy_cond_3 = buy_cond_2 and data_price['slope'][i - 1] > 0
+        
         # 情形一：当前无仓位且短均线上穿长均线(金叉)，则买入股票（明天开盘价买）
         if (data_price['position'][i-1] == 0) and (data_price['sma'][i - 2] < data_price['lma'][i - 2]) and (
                 data_price['sma'][i-1] > data_price['lma'][i-1]):
@@ -144,7 +154,7 @@ def MA_Strategy(data_price, window_short=5, window_median=10, window_long=20, lo
             # 上述也都可以使用data_price.loc[i, 'position']的用法，为了确保没有错误，暂且这么使用
 
         # 多头死叉了往往代表的一种回调到位，不是卖出而是买入。此时短均线是上穿长均线
-        elif (data_price['position'][i-1] == 0) and buy_cond_2:
+        elif (data_price['position'][i-1] == 0) and buy_cond_3:
             print(data_price.index[i], '=========多头死叉买入')
             data_price['flag'][i] = 1 # 记录做多还是做空，这里1是做多
             data_price['position'][i] = 1 # 仓位记录为1，表示有1手仓位
@@ -203,8 +213,19 @@ def MA_Strategy(data_price, window_short=5, window_median=10, window_long=20, lo
             Sell.append([date_out, price_out, 'N周期未盈利平仓']) # 把卖出记录保存到Sell列表里
 
         # 情形六：卖出后的三个bar发现已经上涨了3%，我们把单子追回来，不至于抓不住大的行情。大趋势很难再次金叉了（多头延续的行情需要追单）
+        elif (data_price['position'][i - 1] == 0 and (i - exit_index == 3) and (data_price['close'][i-1] / price_out > 1.03)):
+            data_price['flag'][i] = 1
+            data_price['position'][i] = 1
+            date_in = data_price.index[i] # 记录买入的时间 年-月-日
+            price_in = data_price['open'][i] # 记录买入的价格，这里是以收盘价买入
+            entry_index = i
+            print(data_price.index[i], '=========抓住大的上涨行情@--', price_in)
+            Buy.append([date_in, price_in, '抓住大的上涨行情']) # 把买入记录保存到Buy列表里
+              
 
         # 情形七：逆势买入获得优势成本
+        # 钝化特指摆动指标，存在上下界；顶背离的时候不要着急空，底背离的时候不要着急多，需要到金叉死叉认证后的。
+        # 强势存在回调了 今天kdj跌回到80以下
         elif (data_price['position'][i-1] == 0) and (data_price['kdj_k_ma5'][i-1] > 80) and (data_price['kdj_k'][i-2] > 80) and (data_price['kdj_k'][i-1] < 80) :
             data_price['flag'][i] = 1 # 记录做多还是做空，这里1是做多
             data_price['position'][i] = 1 # 仓位记录为1，表示有1手仓位
@@ -244,8 +265,6 @@ def show_performance( transactions, strategy):
     N = 252
     rf = 0.04
     rety = strategy.nav[strategy.shape[0] - 1]**(N/strategy.shape[0]) - 1
-    # 作业：搜索一下，年化收益，sharpe的原始公式
-    
     #夏普比
     Sharp = (strategy.ret*strategy.position).mean()/(strategy.ret*strategy.position).std()*np.sqrt(N)
     
